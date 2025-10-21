@@ -265,9 +265,24 @@ homeassistant:
 - 알림 권한 허용
 
 #### 2. Notify Service 확인
-1. Home Assistant → 개발자 도구 → 서비스
+
+본인 아이폰의 notify service를 확인하는 방법:
+
+**방법 1: 모바일 앱에서 확인 (가장 쉬움)**
+1. Home Assistant 앱 → **설정** (⚙️) → **Companion App**
+2. **기기 이름** 확인 (예: `iphone_kyle`, `iphone_mom`)
+3. notify service는 `notify.mobile_app_{기기이름}` 형식
+   - 예: 기기 이름이 `iphone_kyle`이면 → `notify.mobile_app_iphone_kyle`
+
+**방법 2: 웹 UI에서 확인**
+1. Home Assistant 웹 → **개발자 도구** → **동작** (또는 **서비스**)
 2. "notify" 검색
-3. 본인 기기의 notify service 확인 (예: `notify.mobile_app_iphone_kyle`)
+3. `notify.mobile_app_xxx` 형식의 서비스 찾기
+
+**방법 3: 상태에서 확인**
+1. Home Assistant 앱 → **개발자 도구** → **상태**
+2. `sensor.` 검색 → `mobile_app` 관련 센서 찾기
+3. 센서 이름에서 기기 이름 확인
 
 ### 단축어 설정 방법
 
@@ -338,12 +353,13 @@ notify.mobile_app_iphone_kyle
 
 **문제 1: 푸시 알람이 안 옴**
 - Home Assistant 앱에서 알림 권한 확인
-- 개발자 도구 → 서비스에서 notify service 테스트:
+- 웹 UI → 개발자 도구 → 동작(서비스)에서 notify service 테스트:
   ```yaml
   service: notify.mobile_app_iphone_kyle
   data:
     message: "테스트"
   ```
+- 또는 Home Assistant 앱 → 설정 → Companion App → "테스트 알림 보내기" 버튼 사용
 
 **문제 2: "Webhook not found" 에러**
 - Home Assistant 재시작 확인
