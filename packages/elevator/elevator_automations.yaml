@@ -1,0 +1,561 @@
+# ============================================================================
+# Home Assistant Elevator Package - Automations
+# ============================================================================
+# 목적: 엘베 호출 및 상태 추적 자동화
+#
+# 자동화 목록:
+#   1. 엘베 호출 시작 (스위치 눌림)
+#   2. Direction 센서 상태 변경 감지
+#   3. 타임아웃 에러 처리 (30초)
+#   4. 센서 Unavailable 에러 처리
+
+automation:
+  # ==========================================================================
+  # 자동화 1: 엘베 호출 시작
+  # ==========================================================================
+  - id: elevator_call_initiated
+    alias: "엘베 호출 시작"
+    description: "거실 스위치 눌렸을 때 엘베 호출 및 초기 알람"
+
+    trigger:
+      # Template 트리거로 동적 entity_id 참조
+      - platform: template
+        value_template: "{{ states(states('input_text.elevator_switch_id')) == states('input_text.switch_action_single') }}"
+
+    action:
+      # ------------------------------------------------------------------------
+      # 1. 엘베 호출 트리거 ON
+      # ------------------------------------------------------------------------
+      - service: switch.turn_on
+        target:
+          entity_id: "{{ states('input_text.elevator_trigger_id') }}"
+
+      # ------------------------------------------------------------------------
+      # 2. 상태 머신 업데이트
+      # ------------------------------------------------------------------------
+      - service: input_select.select_option
+        target:
+          entity_id: input_select.elevator_state
+        data:
+          option: called
+
+      # ------------------------------------------------------------------------
+      # 3. 사용자 호출 플래그 활성화
+      # ------------------------------------------------------------------------
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.elevator_user_called
+
+      # ------------------------------------------------------------------------
+      # 4. 알람 플래그 초기화
+      # ------------------------------------------------------------------------
+      - service: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.elevator_direction_announced
+            - input_boolean.elevator_arriving_announced
+            - input_boolean.elevator_sensor_valid_detected
+
+      # ------------------------------------------------------------------------
+      # 5. 타임아웃 타이머 시작 (30초)
+      # ------------------------------------------------------------------------
+      - service: timer.start
+        target:
+          entity_id: timer.elevator_timeout
+
+      # ------------------------------------------------------------------------
+      # 6. 이미 도착해있는지 확인
+      # ------------------------------------------------------------------------
+      - choose:
+          # 케이스: 이미 Arrival 상태
+          - conditions:
+              - condition: template
+                value_template: "{{ states(states('input_text.direction_sensor_id')) == states('input_text.sensor_state_arrival') }}"
+            sequence:
+              # 모든 상태 즉시 리셋
+              - service: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.elevator_user_called
+
+              - service: input_select.select_option
+                target:
+                  entity_id: input_select.elevator_state
+                data:
+                  option: idle
+
+              - service: timer.cancel
+                target:
+                  entity_id: timer.elevator_timeout
+
+              # "이미 도착" 알람 (변수: secondary_speaker)
+              - service: script.elevator_announce
+                data:
+                  message: "{{ states('input_text.msg_already_arrived') }}"
+                  speaker: "{{ states('input_text.secondary_speaker_id') }}"
+
+        # 기본 케이스: 정상 호출
+        default:
+          # "호출되었습니다" 알람 (변수: primary_speaker)
+          - service: script.elevator_announce
+            data:
+              message: "{{ states('input_text.msg_call_initiated') }}"
+              speaker: "{{ states('input_text.primary_speaker_id') }}"
+
+  # ==========================================================================
+  # 자동화 2: 센서 상태 변경 감지 (Direction + Floor)
+  # ==========================================================================
+  - id: elevator_sensor_changed
+    alias: "엘베 센서 상태 변경"
+    description: "direction 또는 floor 센서 변경 시 상태별 음성 알람"
+
+    trigger:
+      # ⚠️ 주의: entity_id는 하드코딩 필수 (Home Assistant 기술적 제약)
+      # platform: state는 동적 entity_id를 지원하지 않습니다.
+
+      # Direction 센서 트리거
+      - platform: state
+        entity_id: sensor.kocom_ev_kocom_ev_0_direction
+        id: direction_trigger
+
+      # Floor 센서 트리거
+      - platform: state
+        entity_id: sensor.kocom_ev_kocom_ev_0_floor
+        id: floor_trigger
+
+    condition:
+      # 조건 1: 사용자가 호출한 경우만
+      - condition: state
+        entity_id: input_boolean.elevator_user_called
+        state: "on"
+
+      # 조건 2: Direction이 신뢰 가능한 값인지 확인
+      # Upward, Downward, Arrival만 처리
+      # Idle, Called, Unknown은 무시 (불안정)
+      - condition: or
+        conditions:
+          - condition: template
+            value_template: "{{ states(states('input_text.direction_sensor_id')) == states('input_text.sensor_state_upward') }}"
+          - condition: template
+            value_template: "{{ states(states('input_text.direction_sensor_id')) == states('input_text.sensor_state_downward') }}"
+          - condition: template
+            value_template: "{{ states(states('input_text.direction_sensor_id')) == states('input_text.sensor_state_arrival') }}"
+
+    action:
+      - choose:
+          # ====================================================================
+          # 케이스 1: 도착 (Arrival)
+          # ====================================================================
+          - conditions:
+              - condition: template
+                value_template: "{{ states(states('input_text.direction_sensor_id')) == states('input_text.sensor_state_arrival') }}"
+            sequence:
+              # 타이머 취소 (정상 동작 확인)
+              - service: timer.cancel
+                target:
+                  entity_id: timer.elevator_timeout
+
+              # 센서 유효값 감지 플래그 ON
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.elevator_sensor_valid_detected
+
+              # 상태 업데이트
+              - service: input_select.select_option
+                target:
+                  entity_id: input_select.elevator_state
+                data:
+                  option: arrived
+
+              # "도착했습니다" 알람 (변수)
+              - service: script.elevator_announce
+                data:
+                  message: "{{ states('input_text.msg_arrived') }}"
+                  speaker: "{{ states('input_text.secondary_speaker_id') }}"
+
+              # TTS 재생 완료 대기
+              - delay:
+                  seconds: 5
+
+              # 모든 상태 리셋
+              - service: input_boolean.turn_off
+                target:
+                  entity_id:
+                    - input_boolean.elevator_user_called
+                    - input_boolean.elevator_direction_announced
+                    - input_boolean.elevator_arriving_announced
+
+              - service: input_select.select_option
+                target:
+                  entity_id: input_select.elevator_state
+                data:
+                  option: idle
+
+          # ====================================================================
+          # 케이스 2: 올라가는 중 (Upward) - Direction 트리거
+          # ====================================================================
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.id == 'direction_trigger' }}"
+              - condition: template
+                value_template: "{{ states(states('input_text.direction_sensor_id')) == states('input_text.sensor_state_upward') }}"
+              - condition: state
+                entity_id: input_boolean.elevator_direction_announced
+                state: "off"
+              # Floor가 목표층이 아닐 때만 알람 (즉시 도착 상황 제외)
+              - condition: template
+                value_template: >
+                  {% set floor_raw = states(states('input_text.floor_sensor_id')) %}
+                  {% set target = states('input_number.elevator_target_floor') | int %}
+                  {% set current_floor = floor_raw | int(0) %}
+                  {{ current_floor != target }}
+            sequence:
+              # 타이머 취소 (정상 동작 확인)
+              - service: timer.cancel
+                target:
+                  entity_id: timer.elevator_timeout
+
+              # 센서 유효값 감지 플래그 ON
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.elevator_sensor_valid_detected
+
+              # 상태 업데이트
+              - service: input_select.select_option
+                target:
+                  entity_id: input_select.elevator_state
+                data:
+                  option: moving
+
+              # 층 정보 및 근접도 계산
+              - variables:
+                  floor_raw: "{{ states(states('input_text.floor_sensor_id')) }}"
+                  target: "{{ states('input_number.elevator_target_floor') | int }}"
+                  threshold: "{{ states('input_number.elevator_arrival_threshold') | int }}"
+                  direction_text: "{{ states('input_text.msg_direction_upward') }}"
+                  # 지하층 처리 및 층 표기
+                  floor_display: >
+                    {% if floor_raw == 'B1' %}
+                      지하1
+                    {% else %}
+                      {{ floor_raw }}
+                    {% endif %}
+                  # 현재 층수 숫자 변환 (지하층은 음수)
+                  current_floor: >
+                    {% set floor_str = floor_raw | string %}
+                    {% if floor_str == 'B1' %}
+                      -1
+                    {% elif floor_str not in ['Unknown', 'unavailable', 'None', ''] and floor_str[0].isdigit() %}
+                      {{ floor_str | int }}
+                    {% else %}
+                      -999
+                    {% endif %}
+                  # 근접도 판단 (지하층은 항상 멀리)
+                  is_arriving: >
+                    {% set floor_num = current_floor | int %}
+                    {% if floor_num > 0 and floor_num < target %}
+                      {{ floor_num >= (target - threshold) }}
+                    {% else %}
+                      false
+                    {% endif %}
+
+              # 알람 메시지 결정 및 플래그 설정
+              - choose:
+                  # 임계값 이내: "곧 도착합니다"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_arriving }}"
+                    sequence:
+                      - service: script.elevator_announce
+                        data:
+                          message: "{{ states('input_text.msg_arriving_soon') }}"
+                          speaker: "{{ states('input_text.secondary_speaker_id') }}"
+                      - service: input_boolean.turn_on
+                        target:
+                          entity_id: input_boolean.elevator_arriving_announced
+
+                # 임계값 밖: "N층에서 올라가는 중"
+                default:
+                  - service: script.elevator_announce
+                    data:
+                      message: "엘베가 {{ floor_display }}층에서 {{ direction_text }} 중입니다"
+                      speaker: "{{ states('input_text.secondary_speaker_id') }}"
+                  - service: input_boolean.turn_on
+                    target:
+                      entity_id: input_boolean.elevator_direction_announced
+
+          # ====================================================================
+          # 케이스 3: 내려가는 중 (Downward) - Direction 트리거
+          # ====================================================================
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.id == 'direction_trigger' }}"
+              - condition: template
+                value_template: "{{ states(states('input_text.direction_sensor_id')) == states('input_text.sensor_state_downward') }}"
+              - condition: state
+                entity_id: input_boolean.elevator_direction_announced
+                state: "off"
+              # Floor가 목표층이 아닐 때만 알람 (즉시 도착 상황 제외)
+              - condition: template
+                value_template: >
+                  {% set floor_raw = states(states('input_text.floor_sensor_id')) %}
+                  {% set target = states('input_number.elevator_target_floor') | int %}
+                  {% set current_floor = floor_raw | int(0) %}
+                  {{ current_floor != target }}
+            sequence:
+              # 타이머 취소 (정상 동작 확인)
+              - service: timer.cancel
+                target:
+                  entity_id: timer.elevator_timeout
+
+              # 센서 유효값 감지 플래그 ON
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.elevator_sensor_valid_detected
+
+              # 상태 업데이트
+              - service: input_select.select_option
+                target:
+                  entity_id: input_select.elevator_state
+                data:
+                  option: moving
+
+              # 층 정보 및 근접도 계산
+              - variables:
+                  floor_raw: "{{ states(states('input_text.floor_sensor_id')) }}"
+                  target: "{{ states('input_number.elevator_target_floor') | int }}"
+                  threshold: "{{ states('input_number.elevator_arrival_threshold') | int }}"
+                  direction_text: "{{ states('input_text.msg_direction_downward') }}"
+                  # 지하층 처리 및 층 표기
+                  floor_display: >
+                    {% if floor_raw == 'B1' %}
+                      지하1
+                    {% else %}
+                      {{ floor_raw }}
+                    {% endif %}
+                  # 현재 층수 숫자 변환 (지하층은 음수)
+                  current_floor: >
+                    {% set floor_str = floor_raw | string %}
+                    {% if floor_str == 'B1' %}
+                      -1
+                    {% elif floor_str not in ['Unknown', 'unavailable', 'None', ''] and floor_str[0].isdigit() %}
+                      {{ floor_str | int }}
+                    {% else %}
+                      -999
+                    {% endif %}
+                  # 근접도 판단 (지하층은 항상 멀리)
+                  is_arriving: >
+                    {% set floor_num = current_floor | int %}
+                    {% if floor_num > target %}
+                      {{ floor_num <= (target + threshold) }}
+                    {% else %}
+                      false
+                    {% endif %}
+
+              # 알람 메시지 결정 및 플래그 설정
+              - choose:
+                  # 임계값 이내: "곧 도착합니다"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_arriving }}"
+                    sequence:
+                      - service: script.elevator_announce
+                        data:
+                          message: "{{ states('input_text.msg_arriving_soon') }}"
+                          speaker: "{{ states('input_text.secondary_speaker_id') }}"
+                      - service: input_boolean.turn_on
+                        target:
+                          entity_id: input_boolean.elevator_arriving_announced
+
+                # 임계값 밖: "N층에서 내려가는 중"
+                default:
+                  - service: script.elevator_announce
+                    data:
+                      message: "엘베가 {{ floor_display }}층에서 {{ direction_text }} 중입니다"
+                      speaker: "{{ states('input_text.secondary_speaker_id') }}"
+                  - service: input_boolean.turn_on
+                    target:
+                      entity_id: input_boolean.elevator_direction_announced
+
+          # ====================================================================
+          # 케이스 4: Floor 변경 - 임계값 진입 체크
+          # ====================================================================
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.id == 'floor_trigger' }}"
+              - condition: or
+                conditions:
+                  - condition: template
+                    value_template: "{{ states(states('input_text.direction_sensor_id')) == states('input_text.sensor_state_upward') }}"
+                  - condition: template
+                    value_template: "{{ states(states('input_text.direction_sensor_id')) == states('input_text.sensor_state_downward') }}"
+              - condition: state
+                entity_id: input_boolean.elevator_arriving_announced
+                state: "off"
+            sequence:
+              # 층 정보 및 임계값 계산
+              - variables:
+                  floor_raw: "{{ states(states('input_text.floor_sensor_id')) }}"
+                  target: "{{ states('input_number.elevator_target_floor') | int }}"
+                  threshold: "{{ states('input_number.elevator_arrival_threshold') | int }}"
+                  direction_state: "{{ states(states('input_text.direction_sensor_id')) }}"
+                  # 현재 층수 (숫자층만 처리, 지하층은 -999)
+                  current_floor: >
+                    {% set floor_str = floor_raw | string %}
+                    {% if floor_str not in ['Unknown', 'unavailable', 'B1', 'None', ''] and floor_str[0].isdigit() %}
+                      {{ floor_str | int }}
+                    {% else %}
+                      -999
+                    {% endif %}
+                  # 임계값 이내 체크
+                  is_in_threshold: >
+                    {% set floor_num = current_floor | int %}
+                    {% if floor_num > 0 %}
+                      {% if direction_state == states('input_text.sensor_state_upward') %}
+                        {{ floor_num >= (target - threshold) and floor_num < target }}
+                      {% elif direction_state == states('input_text.sensor_state_downward') %}
+                        {{ floor_num > target and floor_num <= (target + threshold) }}
+                      {% else %}
+                        false
+                      {% endif %}
+                    {% else %}
+                      false
+                    {% endif %}
+
+              # 임계값 이내일 때만 알람
+              - condition: template
+                value_template: "{{ is_in_threshold }}"
+
+              - service: script.elevator_announce
+                data:
+                  message: "{{ states('input_text.msg_arriving_soon') }}"
+                  speaker: "{{ states('input_text.secondary_speaker_id') }}"
+
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.elevator_arriving_announced
+
+  # ==========================================================================
+  # 자동화 3: 타임아웃 에러 처리
+  # ==========================================================================
+  - id: elevator_timeout_error
+    alias: "엘베 타임아웃 에러"
+    description: "30초 내 정상 응답 없으면 에러 처리"
+
+    trigger:
+      - platform: event
+        event_type: timer.finished
+        event_data:
+          entity_id: timer.elevator_timeout
+
+    condition:
+      # 사용자 호출 플래그가 아직 ON인 경우만 (정상 도착 시 이미 OFF됨)
+      - condition: state
+        entity_id: input_boolean.elevator_user_called
+        state: "on"
+
+    action:
+      # ------------------------------------------------------------------------
+      # 1. 상태를 에러로 변경
+      # ------------------------------------------------------------------------
+      - service: input_select.select_option
+        target:
+          entity_id: input_select.elevator_state
+        data:
+          option: error
+
+      # ------------------------------------------------------------------------
+      # 2. 에러 알람 (변수)
+      # ------------------------------------------------------------------------
+      - service: script.elevator_announce
+        data:
+          message: "{{ states('input_text.msg_error_timeout') }}"
+          speaker: "{{ states('input_text.secondary_speaker_id') }}"
+
+      # ------------------------------------------------------------------------
+      # 3. 모든 상태 리셋
+      # ------------------------------------------------------------------------
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.elevator_user_called
+
+      - service: input_select.select_option
+        target:
+          entity_id: input_select.elevator_state
+        data:
+          option: idle
+
+      - service: switch.turn_off
+        target:
+          entity_id: "{{ states('input_text.elevator_trigger_id') }}"
+
+  # ==========================================================================
+  # 자동화 4: 센서 Unavailable 에러 처리
+  # ==========================================================================
+  - id: elevator_sensor_unavailable
+    alias: "엘베 센서 연결 끊김"
+    description: "direction/floor 센서 unavailable 시 즉시 에러 처리"
+
+    trigger:
+      # Direction 센서 unavailable (동적 entity_id)
+      - platform: template
+        value_template: "{{ states(states('input_text.direction_sensor_id')) in ['unavailable', 'unknown'] }}"
+        id: direction_unavailable
+
+      # Floor 센서 unavailable (동적 entity_id)
+      - platform: template
+        value_template: "{{ states(states('input_text.floor_sensor_id')) in ['unavailable', 'unknown'] }}"
+        id: floor_unavailable
+
+    condition:
+      # 사용자 호출 중일 때만
+      - condition: state
+        entity_id: input_boolean.elevator_user_called
+        state: "on"
+
+      # 센서가 한 번도 유효값을 가진 적이 없을 때만
+      # (유효값을 한 번이라도 받았으면 일시적 끊김 무시)
+      - condition: state
+        entity_id: input_boolean.elevator_sensor_valid_detected
+        state: "off"
+
+    action:
+      # ------------------------------------------------------------------------
+      # 1. 타이머 취소
+      # ------------------------------------------------------------------------
+      - service: timer.cancel
+        target:
+          entity_id: timer.elevator_timeout
+
+      # ------------------------------------------------------------------------
+      # 2. 상태를 에러로 변경
+      # ------------------------------------------------------------------------
+      - service: input_select.select_option
+        target:
+          entity_id: input_select.elevator_state
+        data:
+          option: error
+
+      # ------------------------------------------------------------------------
+      # 3. 센서 에러 알람 (변수)
+      # ------------------------------------------------------------------------
+      - service: script.elevator_announce
+        data:
+          message: "{{ states('input_text.msg_error_sensor') }}"
+          speaker: "{{ states('input_text.secondary_speaker_id') }}"
+
+      # ------------------------------------------------------------------------
+      # 4. 모든 상태 리셋
+      # ------------------------------------------------------------------------
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.elevator_user_called
+
+      - service: input_select.select_option
+        target:
+          entity_id: input_select.elevator_state
+        data:
+          option: idle
+
+      - service: switch.turn_off
+        target:
+          entity_id: "{{ states('input_text.elevator_trigger_id') }}"

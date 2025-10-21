@@ -1,0 +1,285 @@
+# ============================================================================
+# Home Assistant Elevator Package - Helper Entities
+# ============================================================================
+# 목적: 상태 추적 및 설정을 위한 도우미 엔티티
+# - 상태 머신: 엘베 전체 상태 관리
+# - 사용자 호출 추적: 외부 트리거 방지
+# - 타이머: 타임아웃 에러 처리
+
+# ============================================================================
+# 상태 머신
+# ============================================================================
+input_select:
+  elevator_state:
+    name: "엘베 상태"
+    icon: mdi:elevator
+    options:
+      - idle        # 초기 상태 / 대기 중
+      - called      # 사용자가 스위치 누름
+      - moving      # Upward/Downward 감지됨
+      - arrived     # Arrival 감지됨
+      - error       # 타임아웃 또는 센서 에러
+    initial: idle
+
+# ============================================================================
+# 사용자 호출 추적
+# ============================================================================
+input_boolean:
+  elevator_user_called:
+    name: "사용자 엘베 호출 활성"
+    icon: mdi:bell-ring
+    initial: false
+    # 목적: 사용자가 명시적으로 스위치를 누른 경우만 추적
+    # 외부 트리거(월패드 물리 버튼 등)로 인한 센서 업데이트 시 알람 방지
+
+  elevator_direction_announced:
+    name: "방향 알람 전송 완료"
+    icon: mdi:check-circle
+    initial: false
+    # 목적: "N층에서 올라가는/내려가는 중" 알람이 이미 전송되었는지 추적
+    # 한 번의 엘베 호출당 해당 메시지는 최대 1회만 전송
+
+  elevator_arriving_announced:
+    name: "곧 도착 알람 전송 완료"
+    icon: mdi:check-circle
+    initial: false
+    # 목적: "엘베가 곧 도착합니다" 알람이 이미 전송되었는지 추적
+    # 한 번의 엘베 호출당 해당 메시지는 최대 1회만 전송
+
+  elevator_sensor_valid_detected:
+    name: "센서 유효값 감지됨"
+    icon: mdi:check-circle-outline
+    initial: false
+    # 목적: 호출 후 최소 1번이라도 유효한 센서 값(Upward/Downward/Arrival)을 받았는지 추적
+    # 센서가 한 번이라도 유효했으면 이후 일시적 끊김 무시
+
+# ============================================================================
+# 설정값 (숫자)
+# ============================================================================
+input_number:
+  elevator_arrival_threshold:
+    name: "엘베 도착 임계값"
+    icon: mdi:ruler
+    min: 1
+    max: 10
+    step: 1
+    initial: 5
+    mode: box
+    unit_of_measurement: "층"
+    # 목적: 목표층(21층) 기준 ±N층 이내 = "곧 도착합니다" 알람
+    # 예: 5층 설정 시
+    #   - 올라갈 때: 16~20층에서 "곧 도착합니다"
+    #   - 내려갈 때: 22~26층에서 "곧 도착합니다"
+
+  elevator_target_floor:
+    name: "엘베 목표층"
+    icon: mdi:home-floor-21
+    min: 1
+    max: 50
+    step: 1
+    initial: 21
+    mode: box
+    unit_of_measurement: "층"
+    # 목적: 엘베가 도착할 목표층 설정
+
+  elevator_volume_day:
+    name: "주간 볼륨"
+    icon: mdi:volume-high
+    min: 0.0
+    max: 1.0
+    step: 0.1
+    initial: 0.7
+    mode: slider
+    # 목적: 주간 시간대(07:00-22:00) TTS 볼륨
+
+  elevator_volume_night:
+    name: "야간 볼륨"
+    icon: mdi:volume-low
+    min: 0.0
+    max: 1.0
+    step: 0.1
+    initial: 0.3
+    mode: slider
+    # 목적: 야간 시간대(22:00-07:00) TTS 볼륨
+
+# ============================================================================
+# 시간대별 볼륨 설정
+# ============================================================================
+input_datetime:
+  elevator_quiet_start:
+    name: "조용한 시간 시작"
+    icon: mdi:weather-night
+    has_date: false
+    has_time: true
+    initial: "22:00"
+    # 목적: 이 시간부터 야간 볼륨(0.3) 적용
+
+  elevator_quiet_end:
+    name: "조용한 시간 종료"
+    icon: mdi:weather-sunny
+    has_date: false
+    has_time: true
+    initial: "07:00"
+    # 목적: 이 시간부터 주간 볼륨(0.7) 적용
+
+# ============================================================================
+# 타임아웃 타이머
+# ============================================================================
+timer:
+  elevator_timeout:
+    name: "엘베 응답 대기 타이머"
+    icon: mdi:timer-sand
+    duration: "00:00:30"
+    # 목적: 스위치 누른 후 30초 내 Upward/Downward/Arrival 없으면 에러 처리
+    # 동작:
+    #   - 스위치 누름 → 타이머 시작
+    #   - Upward/Downward/Arrival 감지 → 타이머 취소 (정상)
+    #   - 30초 경과 → 타임아웃 에러 발동
+
+# ============================================================================
+# 변수 관리 (Entity IDs)
+# ============================================================================
+input_text:
+  # -------------------------------------------------------------------------
+  # 엔티티 ID 변수
+  # -------------------------------------------------------------------------
+  elevator_switch_id:
+    name: "엘베 스위치 Entity ID"
+    icon: mdi:light-switch
+    initial: "sensor.0x00158d0001a66e69_action"
+    max: 255
+    # 목적: 거실 엘베 호출 스위치 entity_id (버튼 액션 센서)
+
+  elevator_trigger_id:
+    name: "엘베 트리거 Entity ID"
+    icon: mdi:elevator-up
+    initial: "switch.kocom_elevator_0_0"
+    max: 255
+    # 목적: 엘베 호출 트리거 스위치 entity_id
+
+  direction_sensor_id:
+    name: "Direction 센서 Entity ID"
+    icon: mdi:arrow-up-down
+    initial: "sensor.kocom_ev_kocom_ev_0_direction"
+    max: 255
+    # 목적: 엘베 방향 센서 entity_id
+
+  floor_sensor_id:
+    name: "Floor 센서 Entity ID"
+    icon: mdi:counter
+    initial: "sensor.kocom_ev_kocom_ev_0_floor"
+    max: 255
+    # 목적: 엘베 층수 센서 entity_id
+
+  primary_speaker_id:
+    name: "주 스피커 Entity ID"
+    icon: mdi:speaker
+    initial: "media_player.livingroom_left"
+    max: 255
+    # 목적: 호출 알람 전용 스피커 (거실)
+
+  secondary_speaker_id:
+    name: "보조 스피커 Entity ID"
+    icon: mdi:speaker
+    initial: "media_player.kitchen"
+    max: 255
+    # 목적: 상태 알람 전용 스피커 (주방)
+
+  tts_service_name:
+    name: "TTS 서비스명"
+    icon: mdi:text-to-speech
+    initial: "tts.cloud_say"
+    max: 255
+    # 목적: 사용할 TTS 서비스 (예: tts.cloud_say, tts.google_ai_tts_say)
+
+  # -------------------------------------------------------------------------
+  # 음성 메시지 변수
+  # -------------------------------------------------------------------------
+  msg_call_initiated:
+    name: "메시지: 호출됨"
+    icon: mdi:message-alert
+    initial: "엘베가 호출되었습니다"
+    max: 255
+
+  msg_already_arrived:
+    name: "메시지: 이미 도착"
+    icon: mdi:message-check
+    initial: "엘베가 도착했습니다"
+    max: 255
+
+  msg_arriving_soon:
+    name: "메시지: 곧 도착"
+    icon: mdi:message-processing
+    initial: "엘베가 곧 도착합니다"
+    max: 255
+
+  msg_arrived:
+    name: "메시지: 도착"
+    icon: mdi:message-badge
+    initial: "엘베가 도착했습니다"
+    max: 255
+
+  msg_error_timeout:
+    name: "메시지: 타임아웃 에러"
+    icon: mdi:message-alert-outline
+    initial: "엘베 호출에 문제가 있습니다. 다시 호출해주세요"
+    max: 255
+
+  msg_error_sensor:
+    name: "메시지: 센서 에러"
+    icon: mdi:message-alert-outline
+    initial: "엘베 센서 연결에 문제가 있습니다. 다시 호출해주세요"
+    max: 255
+
+  msg_direction_upward:
+    name: "메시지: 올라가는 중"
+    icon: mdi:arrow-up-bold
+    initial: "올라가는"
+    max: 50
+
+  msg_direction_downward:
+    name: "메시지: 내려가는 중"
+    icon: mdi:arrow-down-bold
+    initial: "내려가는"
+    max: 50
+
+  # -------------------------------------------------------------------------
+  # 센서 상태값 변수
+  # -------------------------------------------------------------------------
+  sensor_state_arrival:
+    name: "센서 상태: 도착"
+    icon: mdi:elevator-down
+    initial: "arrival"
+    max: 50
+    # 목적: Direction 센서의 도착 상태값
+
+  sensor_state_upward:
+    name: "센서 상태: 올라가는 중"
+    icon: mdi:arrow-up
+    initial: "upward"
+    max: 50
+    # 목적: Direction 센서의 상승 상태값
+
+  sensor_state_downward:
+    name: "센서 상태: 내려가는 중"
+    icon: mdi:arrow-down
+    initial: "downward"
+    max: 50
+    # 목적: Direction 센서의 하강 상태값
+
+  switch_action_single:
+    name: "스위치 액션: 단일 클릭"
+    icon: mdi:gesture-tap
+    initial: "single"
+    max: 50
+    # 목적: 스위치의 단일 클릭 액션 상태값
+
+  # -------------------------------------------------------------------------
+  # 시스템 내부 변수
+  # -------------------------------------------------------------------------
+  last_announcement:
+    name: "마지막 알람 메시지"
+    icon: mdi:message-text-clock
+    initial: ""
+    max: 255
+    # 목적: 중복 알람 방지 - 직전 알람 메시지 저장
