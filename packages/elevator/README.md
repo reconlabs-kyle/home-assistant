@@ -82,6 +82,7 @@ homeassistant:
 3. ✅ **근접 알람**: 목표층 가까워지면 "곧 도착합니다"
 4. ✅ **도착 알람**: 21층 도착 시 알람
 5. ✅ **외부 트리거 방지**: 월패드 버튼 등 외부 호출 시 알람 안 울림
+6. ✅ **아이폰 단축어 지원**: 아이폰에서 Webhook 호출 시 푸시 알람 전송
 
 ### 개선 기능
 1. ✅ **변수 중앙화**: 모든 설정값을 도우미 엔티티로 관리 - UI에서 실시간 수정 가능
@@ -252,6 +253,106 @@ homeassistant:
 
 **해결:** UI → 설정 → 도우미 → `엘베 도착 임계값` 조절 (1~10층)
 
+## 📱 아이폰 단축어 사용 가이드
+
+아이폰 단축어 앱을 통해 엘베를 호출하면 **푸시 알람**으로 상태를 받을 수 있습니다.
+
+### 사전 준비
+
+#### 1. Home Assistant 모바일 앱 설치
+- App Store에서 "Home Assistant" 앱 설치
+- Home Assistant에 로그인
+- 알림 권한 허용
+
+#### 2. Notify Service 확인
+1. Home Assistant → 개발자 도구 → 서비스
+2. "notify" 검색
+3. 본인 기기의 notify service 확인 (예: `notify.mobile_app_iphone_kyle`)
+
+### 단축어 설정 방법
+
+#### 1. 새 단축어 만들기
+1. 아이폰 **단축어** 앱 실행
+2. **새로운 단축어** 생성
+
+#### 2. 동작 추가
+다음 순서대로 동작을 추가하세요:
+
+**동작 1: 텍스트**
+```
+notify.mobile_app_iphone_kyle
+```
+(본인의 notify service로 변경)
+
+**동작 2: 사전**
+- 키: `notify_service`
+- 값: `[1번 텍스트 동작]` 선택
+
+**동작 3: URL의 콘텐츠 가져오기**
+- **URL**: `https://YOUR_HOME_ASSISTANT_URL/api/webhook/elevator_call_mobile`
+  - `YOUR_HOME_ASSISTANT_URL`을 본인의 Home Assistant URL로 변경
+  - 예: `https://my-home.duckdns.org/api/webhook/elevator_call_mobile`
+- **방법**: `POST`
+- **요청 본문**: `JSON`
+- **내용**: `[2번 사전 동작]` 선택
+
+#### 3. 단축어 이름 설정
+- 단축어 이름: "엘베 호출" (또는 원하는 이름)
+- 홈 화면에 추가 (선택)
+
+### Webhook URL 확인 방법
+
+본인의 Home Assistant URL 찾기:
+1. Home Assistant 앱 → 설정 → Companion App
+2. **Home Assistant URL** 확인
+3. 뒤에 `/api/webhook/elevator_call_mobile` 추가
+
+예시:
+- 내부: `http://192.168.0.100:8123/api/webhook/elevator_call_mobile`
+- 외부: `https://your-domain.duckdns.org/api/webhook/elevator_call_mobile`
+
+### 사용 방법
+
+1. 아이폰에서 "엘베 호출" 단축어 실행
+2. 푸시 알람으로 상태 수신:
+   - "🛗 엘리베이터: 엘베가 호출되었습니다"
+   - "🛗 엘리베이터: 엘베가 16층에서 올라가는 중입니다"
+   - "🛗 엘리베이터: 엘베가 곧 도착합니다"
+   - "🛗 엘리베이터: 엘베가 도착했습니다"
+
+### 여러 아이폰 사용 시
+
+각 아이폰마다 다른 notify service를 사용하면 됩니다:
+
+**아이폰 1 (Kyle)**
+- Notify Service: `notify.mobile_app_iphone_kyle`
+- 단축어에 `notify.mobile_app_iphone_kyle` 입력
+
+**아이폰 2 (Mom)**
+- Notify Service: `notify.mobile_app_iphone_mom`
+- 단축어에 `notify.mobile_app_iphone_mom` 입력
+
+→ 각자 본인의 단축어로 호출하면 **본인만** 푸시 알람을 받습니다.
+
+### 문제 해결
+
+**문제 1: 푸시 알람이 안 옴**
+- Home Assistant 앱에서 알림 권한 확인
+- 개발자 도구 → 서비스에서 notify service 테스트:
+  ```yaml
+  service: notify.mobile_app_iphone_kyle
+  data:
+    message: "테스트"
+  ```
+
+**문제 2: "Webhook not found" 에러**
+- Home Assistant 재시작 확인
+- URL 끝에 `/api/webhook/elevator_call_mobile` 정확히 입력했는지 확인
+
+**문제 3: 음성 알람이 함께 나옴**
+- 정상적으로 푸시만 가야 합니다
+- 로그 확인: `input_text.elevator_notify_target`가 비어있지 않은지 확인
+
 ## 📊 상태 머신 다이어그램
 
 ```
@@ -292,12 +393,13 @@ entities:
 ✅ 스위치 기반 엘베 호출
 ✅ 음성 알람
 ✅ 에러 핸들링
+✅ iOS 단축어 통합
+✅ 모바일 푸시 알림
 
 ### 2단계 (향후)
-- [ ] iOS 단축어 통합
-- [ ] 모바일 푸시 알림
 - [ ] 호출 이력 로깅
 - [ ] 평균 도착 시간 분석
+- [ ] Android 단축어 지원
 
 ### 3단계 (고급)
 - [ ] 대시보드 UI
@@ -319,7 +421,13 @@ entities:
 
 ## 🔄 변경 이력
 
-### v2.0 (최신)
+### v2.1 (최신)
+- ✅ **아이폰 단축어 지원**: Webhook 통합으로 모바일 호출 가능
+- ✅ **푸시 알람**: 모바일 호출 시 음성 대신 푸시 알람 전송
+- ✅ **멀티 디바이스**: 여러 아이폰에서 각자 호출 가능 (notify service 동적 지정)
+- ✅ **조건부 알람 분기**: TTS vs 푸시 자동 선택
+
+### v2.0
 - ✅ **변수 중앙화**: 모든 설정을 input_text/input_number 도우미로 관리
 - ✅ **UI 실시간 수정**: 재시작 없이 대부분의 설정 변경 가능
 - ✅ **Floor 센서 트리거 추가**: Direction + Floor 양쪽 센서 모니터링

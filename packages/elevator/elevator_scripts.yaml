@@ -12,8 +12,8 @@ script:
   # 엘베 음성 알람 메인 스크립트
   # ==========================================================================
   elevator_announce:
-    alias: "엘베 음성 알람"
-    description: "TTS를 사용한 엘베 상태 알람 (시간대별 볼륨 자동 조절)"
+    alias: "엘베 알람 (TTS 또는 푸시)"
+    description: "스위치 호출 시 TTS, 모바일 호출 시 푸시 알람 출력"
     mode: queued        # 여러 알람이 동시에 오면 대기열로 처리
     max: 5              # 최대 5개까지 대기
     icon: mdi:bullhorn
@@ -27,7 +27,7 @@ script:
           text:
 
       speaker:
-        description: "스피커 entity_id"
+        description: "스피커 entity_id (TTS 모드 전용)"
         example: "media_player.kitchen"
         required: true
         selector:
@@ -36,45 +36,70 @@ script:
 
     sequence:
       # ------------------------------------------------------------------------
-      # 1단계: 시간대별 볼륨 계산 및 설정
+      # 알람 출력 방식 분기
       # ------------------------------------------------------------------------
-      - service: media_player.volume_set
-        data:
-          entity_id: "{{ speaker }}"
-          volume_level: >
-            {# 현재 시간 가져오기 #}
-            {% set now_time = now().strftime('%H:%M') %}
+      - choose:
+          # ====================================================================
+          # 케이스 1: 모바일 호출 → 푸시 알람
+          # ====================================================================
+          - conditions:
+              - condition: template
+                value_template: "{{ states('input_text.elevator_notify_target') != '' }}"
+            sequence:
+              # 푸시 알람 전송 (동적 notify service)
+              - service: "{{ states('input_text.elevator_notify_target') }}"
+                data:
+                  title: "🛗 엘리베이터"
+                  message: "{{ message }}"
+                  data:
+                    push:
+                      sound:
+                        name: default
+                        critical: 0
+                        volume: 0.5
 
-            {# 조용한 시간 범위 가져오기 #}
-            {% set quiet_start = states('input_datetime.elevator_quiet_start') %}
-            {% set quiet_end = states('input_datetime.elevator_quiet_end') %}
+              # 연속 알람 간격
+              - delay:
+                  seconds: 1
 
-            {# 볼륨 값 가져오기 (변수) #}
-            {% set volume_day = states('input_number.elevator_volume_day') | float %}
-            {% set volume_night = states('input_number.elevator_volume_night') | float %}
+        # ====================================================================
+        # 케이스 2 (기본): 스위치 호출 → TTS 음성 알람
+        # ====================================================================
+        default:
+          # 시간대별 볼륨 계산 및 설정
+          - service: media_player.volume_set
+            data:
+              entity_id: "{{ speaker }}"
+              volume_level: >
+                {# 현재 시간 가져오기 #}
+                {% set now_time = now().strftime('%H:%M') %}
 
-            {# 시간대 판단 (22:00 - 07:00 = 야간) #}
-            {% if quiet_start <= now_time or now_time < quiet_end %}
-              {{ volume_night }}
-            {% else %}
-              {{ volume_day }}
-            {% endif %}
+                {# 조용한 시간 범위 가져오기 #}
+                {% set quiet_start = states('input_datetime.elevator_quiet_start') %}
+                {% set quiet_end = states('input_datetime.elevator_quiet_end') %}
 
-      # ------------------------------------------------------------------------
-      # 2단계: TTS 음성 출력
-      # ------------------------------------------------------------------------
-      - service: "{{ states('input_text.tts_service_name') }}"
-        data:
-          entity_id: "{{ speaker }}"
-          message: "{{ message }}"
-          language: ko-KR
-          options:
-            voice: Despina
-        # 주의: TTS 서비스는 input_text.tts_service_name에서 동적으로 가져옴
-        # 예: tts.cloud_say, tts.google_ai_tts_say 등
+                {# 볼륨 값 가져오기 (변수) #}
+                {% set volume_day = states('input_number.elevator_volume_day') | float %}
+                {% set volume_night = states('input_number.elevator_volume_night') | float %}
 
-      # ------------------------------------------------------------------------
-      # 3단계: 연속 알람 간격 (알람 도배 방지)
-      # ------------------------------------------------------------------------
-      - delay:
-          seconds: 1
+                {# 시간대 판단 (22:00 - 07:00 = 야간) #}
+                {% if quiet_start <= now_time or now_time < quiet_end %}
+                  {{ volume_night }}
+                {% else %}
+                  {{ volume_day }}
+                {% endif %}
+
+          # TTS 음성 출력
+          - service: "{{ states('input_text.tts_service_name') }}"
+            data:
+              entity_id: "{{ speaker }}"
+              message: "{{ message }}"
+              language: ko-KR
+              options:
+                voice: Despina
+            # 주의: TTS 서비스는 input_text.tts_service_name에서 동적으로 가져옴
+            # 예: tts.cloud_say, tts.google_ai_tts_say 등
+
+          # 연속 알람 간격 (알람 도배 방지)
+          - delay:
+              seconds: 1
