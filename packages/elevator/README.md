@@ -304,12 +304,26 @@ notify.mobile_app_iphone_kyle
 - 값: `[1번 텍스트 동작]` 선택
 
 **동작 3: URL의 콘텐츠 가져오기**
-- **URL**: `https://YOUR_HOME_ASSISTANT_URL/api/webhook/elevator_call_mobile`
-  - `YOUR_HOME_ASSISTANT_URL`을 본인의 Home Assistant URL로 변경
-  - 예: `https://my-home.duckdns.org/api/webhook/elevator_call_mobile`
-- **방법**: `POST`
-- **요청 본문**: `JSON`
-- **내용**: `[2번 사전 동작]` 선택
+
+아래 항목들을 다음과 같이 설정:
+
+1. **URL**:
+   ```
+   https://YOUR_HOME_ASSISTANT_URL/api/webhook/elevator_call_mobile
+   ```
+   - `YOUR_HOME_ASSISTANT_URL`을 본인의 Home Assistant URL로 변경
+   - 예: `https://my-home.duckdns.org/api/webhook/elevator_call_mobile`
+
+2. **메소드** (또는 **방법**): `POST` 선택
+
+3. **본문요청** (또는 **요청 본문**):
+   - 타입을 `JSON`으로 선택
+   - JSON 입력 필드가 나타나면 `[2번 사전 동작]`을 선택
+   - (변수 메뉴에서 "사전" 항목 찾아서 탭)
+
+4. **헤더**: 설정 불필요 (기본값 유지)
+
+5. **해로운 필드 추가**: 비활성화 (기본값 유지)
 
 #### 3. 단축어 이름 설정
 - 단축어 이름: "엘베 호출" (또는 원하는 이름)
