@@ -283,3 +283,13 @@ input_text:
     initial: ""
     max: 255
     # 목적: 중복 알람 방지 - 직전 알람 메시지 저장
+
+  elevator_notify_target:
+    name: "알람 출력 대상"
+    icon: mdi:bell-ring-outline
+    initial: ""
+    max: 255
+    # 목적: 알람 출력 방식 결정
+    # - 빈 값: 스위치 호출 → TTS 음성 알람 (스피커)
+    # - notify service: 모바일 호출 → 푸시 알람 (예: notify.mobile_app_iphone_kyle)
+    # 여러 아이폰 지원: 각 기기마다 다른 notify service 전달
